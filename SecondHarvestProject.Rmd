@@ -1,0 +1,336 @@
+---
+title: "Second Harvest Practicum Project"
+author: "Ben Foglia"
+date: "6/5/2020"
+output: 
+  html_document:
+    theme: journal
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+```{r global_options, include=FALSE}
+knitr::opts_chunk$set(fig.width=12, fig.height=8, fig.path='Figs/',
+                      echo=FALSE, warning=FALSE, message=FALSE)
+```
+As part of a practicum project in Wake Forest University's MS in Business Analytics program, I worked with Second Harvest Food Bank of Northwest North Carolina. I was given a csv of donor data dating back to 2004, and was tasked with forecasting future donations, and segmenting donors to improve future donation solicitation processes.
+
+### Packages
+
+```{r, echo=TRUE}
+library(readr)
+library(ggplot2)
+library(forecast)
+library(dplyr)
+library(lubridate)
+library(rfm)
+library(RColorBrewer)
+library(knitr)
+```
+
+### Head of csv file
+
+```{r, message=FALSE, warning=FALSE}
+Donor_Report <- read_csv("F:/Practicum/donor_report.csv", 
+                         col_types = cols(`Gift Amount` = col_number(), 
+                                          `Gift Date` = col_date(format = "%m/%d/%Y")))
+head(Donor_Report)
+```
+
+## Forecasting
+
+I forecasted the total amount donated each month. I filtered down to only include non-capital individuals because corporations and capital individuals tend to donate randomly and only once. Filtering down removed these outliers. I then plotted a time series, autocorrelation function, and seasonal plot.
+
+```{r}
+donors <- Donor_Report %>% mutate(year = year(`Gift Date`), month = month(`Gift Date`)) %>%
+  group_by(year, month) %>% filter(`Source of Donation` == "Individual") %>% 
+  filter(`Source of Donation` != "Capital Individual") %>%
+  summarise(total_donations = sum(`Gift Amount`))
+```
+
+```{r}
+ts <- ts(donors, start = c(2004, 7), frequency = 12)  
+```
+
+```{r}
+autoplot(ts[,"total_donations"], xlab = "Year", ylab = "Donations in USD")
+
+ggAcf(ts[,"total_donations"])
+
+ggseasonplot(ts[,"total_donations"], year.labels = TRUE)
+```
+
+The time series shows a clear upward trend, and the spikes at lags 12 and 24 in the autocorrelation plot shows that there is indeed seasonality. Looking at the ACF and running auto.arima shows that this is an ARIMA(0,0,0)(0,1,1)[12] model, meaning there are significant spikes every 12 months, and those spikes decrease further along (lag 12 is the highest, lags 24, 36, etc. countinually decrease). We can now plot the forecast.
+
+```{r}
+forecast <- auto.arima(ts[, 'total_donations'])
+autoplot(forecast(forecast)) + xlab("Year") + ylab("Donations in USD")
+
+forecastdata <- forecast(forecast)
+forecasttable <- (as.data.frame(forecastdata))
+head(forecasttable)
+```
+
+The plot and corresponding table show us the predicted value (point forecast in the table), as well as the values for the 80% and 95% confidence intervals (lighter and darker shaded areas in the plot, respectively).
+
+Initially, I was only going to use the last 10 years of data to forecast, in order to leave out 2008 and 2009, where donations dipped because of the recession, but after the COVID-19 crisis hit, I decided it would be better to have the recession in just in case.
+
+## Donor Segmenting
+
+Second Harvest runs mailing campaigns throughout the year and sends a donation form to every one of their donors in the mail. This didn't account for people who may have just donated or people that only donated once years ago and might not even be at that address anymore. To improve this, I ran an RFM analysis. This puts customers into segments based on recency, frequency, and monetary values. Customers are places into five equally sized bins for each of the three categories. An outline of the segments is shown below.
+
+```{r, echo=FALSE}
+img <- "F:/rfm_segments.png"
+include_graphics(img)
+```
+
+
+Again using only non-capital individuals, and using 12/31/2019 (the last day donation data is available) as our analysis date, we can begin to segment our donors and create plots.
+
+```{r, echo=FALSE}
+donorrfm <- Donor_Report %>% 
+  filter(`Source of Donation` == "Individual") %>% 
+  filter(`Source of Donation` != "Capital Individual")
+
+analysis_date <- as_date("2019-12-31", tz = "EST")
+
+rfm <- rfm_table_order(donorrfm, customer_id = `Unique Donor ID`, 
+                       order_date = `Gift Date`, revenue = `Gift Amount`, 
+                       analysis_date = analysis_date)
+str(rfm)
+
+```
+*structure of newly created rfm tibble*
+
+```{r, echo=FALSE}
+rfm_heatmap(rfm)
+rfm_bar_chart(rfm)
+
+```
+
+The heatmap shows us how much money we would expect someone to donate base on their recency and frequency scores. Our chart shows us that the most money is coming in from our most recent donors. This should be seen as a positive. If there were big money donors with very low recency scores, we would be seriously concerned about losing a large amount of donations. The bar charts further show us that the most recent and most frequent donors are donating the most money.
+
+Now that we have the distriubution of the scores, let's take a look at what the actual values in each segment are. I've created a chart of the amount of donors in each segment and 3 bar plots showing the median recency, frequency, and monetary values of each segment.
+
+```{r, echo=FALSE}
+segment_names <- c("Loyal Donors", "Potential Loyalist",
+                   "New Donors", "Promising", "Need Attention", "About To Sleep",
+                   "At Risk", "Can't Lose Them", "Hibernating", "Lost")
+recency_lower <- c(2, 3, 4, 3, 2, 2, 1, 1, 1, 1)
+recency_upper <- c(5, 5, 5, 4, 3, 3, 2, 1, 2, 1)
+frequency_lower <- c(3, 1, 1, 1, 2, 1, 2, 4, 1, 1)
+frequency_upper <- c(5, 3, 1, 1, 3, 2, 5, 5, 2, 1)
+monetary_lower <- c(3, 1, 1, 1, 2, 1, 2, 4, 1, 1)
+monetary_upper <- c(5, 3, 1, 1, 3, 2, 5, 5, 2, 1)
+rfm_segments <- rfm_segment(rfm, segment_names = segment_names, recency_lower = recency_lower, recency_upper = recency_upper,
+            frequency_lower = frequency_lower, frequency_upper = frequency_upper, monetary_lower = monetary_lower, monetary_upper = monetary_upper)
+
+rfm_segments %>%
+  count(segment) %>%
+  arrange(desc(n)) %>%
+  rename(Segment = segment, Count = n)
+```
+
+```{r, echo=FALSE}
+data <- 
+  rfm_segments %>%
+  group_by(segment) %>%
+  select(segment, recency_days) %>%
+  summarize(median(recency_days)) %>%
+  rename(segment = segment, med_recency = `median(recency_days)`) %>%
+  arrange(med_recency) 
+
+n_fill <- nrow(data)
+
+ggplot(data, aes(segment, med_recency)) +
+  geom_bar(stat = "identity", fill = brewer.pal(n=n_fill, name = "Paired")) +
+  xlab("Segment") + ylab("Median Recency (Days Since Last Donation)") +
+  ggtitle("Median Recency by Segment") +
+  coord_flip() +
+  theme(
+    plot.title = element_text(hjust = 0.5)
+  )
+
+```
+
+```{r}
+data <- 
+  rfm_segments %>%
+  group_by(segment) %>%
+  select(segment, transaction_count) %>%
+  summarize(median(transaction_count)) %>%
+  rename(segment = segment, med_frequency = `median(transaction_count)`) %>%
+  arrange(med_frequency) 
+
+n_fill <- nrow(data)
+
+ggplot(data, aes(segment, med_frequency)) +
+  geom_bar(stat = "identity", fill = brewer.pal(n = n_fill, name = "Paired")) +
+  xlab("Segment") + ylab("Median Frequency (Number of Times Donated)") +
+  ggtitle("Median Frequency by Segment") +
+  coord_flip() +
+  theme(
+    plot.title = element_text(hjust = 0.5)
+  )
+
+```
+
+```{r}
+data <- 
+  rfm_segments %>%
+  group_by(segment) %>%
+  select(segment, amount) %>%
+  summarize(median(amount)) %>%
+  rename(segment = segment, med_monetary = `median(amount)`) %>%
+  arrange(med_monetary) 
+
+n_fill <- nrow(data)
+
+ggplot(data, aes(segment, med_monetary)) +
+  geom_bar(stat = "identity", fill = brewer.pal(n = n_fill, name = "Paired")) +
+  xlab("Segment") + ylab("Median Monetary Value") +
+  ggtitle("Median Monetary Value by Segment (Total Amount Donated in USD)") +
+  coord_flip() +
+  theme(
+    plot.title = element_text(hjust = 0.5)
+  )
+
+```
+
+These graphs confirm what the segment chart originally showed us (i.e. "Loyal Donors" and "Can't Lose Them" donate the most), but now we have exact values for each segment, rather than just the five bins.
+
+## Conclusion
+
+With this information, my hope is that Second Harvest can effictively market to their most crucial donors, especially in a time like this, where certain segments may not be able to donate during the pandemic. Hopefully it can use the RFM analysis and forecast together to make sure that they get the most they expected out of each segment.
+
+
+## Code
+
+```{r, eval=FALSE, echo=TRUE}
+library(readr)
+library(ggplot2)
+library(forecast)
+library(dplyr)
+library(lubridate)
+library(rfm)
+library(RColorBrewer)
+library(knitr)
+
+Donor_Report <- read_csv("F:/Practicum/donor_report.csv", 
+                         col_types = cols(`Gift Amount` = col_number(), 
+                                          `Gift Date` = col_date(format = "%m/%d/%Y")))
+head(Donor_Report)
+
+donors <- Donor_Report %>% mutate(year = year(`Gift Date`), month = month(`Gift Date`)) %>%
+  group_by(year, month) %>% filter(`Source of Donation` == "Individual") %>% 
+  filter(`Source of Donation` != "Capital Individual") %>%
+  summarise(total_donations = sum(`Gift Amount`))
+
+ts <- ts(donors, start = c(2004, 7), frequency = 12)  
+
+autoplot(ts[,"total_donations"], xlab = "Year", ylab = "Donations in USD")
+
+ggAcf(ts[,"total_donations"])
+
+ggseasonplot(ts[,"total_donations"], year.labels = TRUE)
+
+forecast <- auto.arima(ts[, 'total_donations'])
+autoplot(forecast(forecast)) + xlab("Year") + ylab("Donations in USD")
+
+forecastdata <- forecast(forecast)
+forecasttable <- (as.data.frame(forecastdata))
+head(forecasttable)
+
+img <- "F:/rfm_segments.png"
+include_graphics(img)
+
+donorrfm <- Donor_Report %>% 
+  filter(`Source of Donation` == "Individual") %>% 
+  filter(`Source of Donation` != "Capital Individual")
+
+analysis_date <- as_date("2019-12-31", tz = "EST")
+
+rfm <- rfm_table_order(donorrfm, customer_id = `Unique Donor ID`, 
+                       order_date = `Gift Date`, revenue = `Gift Amount`, 
+                       analysis_date = analysis_date)
+str(rfm)
+
+rfm_heatmap(rfm)
+rfm_bar_chart(rfm)
+
+segment_names <- c("Loyal Donors", "Potential Loyalist",
+                   "New Donors", "Promising", "Need Attention", "About To Sleep",
+                   "At Risk", "Can't Lose Them", "Hibernating", "Lost")
+recency_lower <- c(2, 3, 4, 3, 2, 2, 1, 1, 1, 1)
+recency_upper <- c(5, 5, 5, 4, 3, 3, 2, 1, 2, 1)
+frequency_lower <- c(3, 1, 1, 1, 2, 1, 2, 4, 1, 1)
+frequency_upper <- c(5, 3, 1, 1, 3, 2, 5, 5, 2, 1)
+monetary_lower <- c(3, 1, 1, 1, 2, 1, 2, 4, 1, 1)
+monetary_upper <- c(5, 3, 1, 1, 3, 2, 5, 5, 2, 1)
+rfm_segments <- rfm_segment(rfm, segment_names = segment_names, recency_lower = recency_lower, recency_upper = recency_upper,
+            frequency_lower = frequency_lower, frequency_upper = frequency_upper, monetary_lower = monetary_lower, monetary_upper = monetary_upper)
+
+rfm_segments %>%
+  count(segment) %>%
+  arrange(desc(n)) %>%
+  rename(Segment = segment, Count = n)
+
+data <- 
+  rfm_segments %>%
+  group_by(segment) %>%
+  select(segment, recency_days) %>%
+  summarize(median(recency_days)) %>%
+  rename(segment = segment, med_recency = `median(recency_days)`) %>%
+  arrange(med_recency) 
+
+n_fill <- nrow(data)
+
+ggplot(data, aes(segment, med_recency)) +
+  geom_bar(stat = "identity", fill = brewer.pal(n=n_fill, name = "Paired")) +
+  xlab("Segment") + ylab("Median Recency (Days Since Last Donation)") +
+  ggtitle("Median Recency by Segment") +
+  coord_flip() +
+  theme(
+    plot.title = element_text(hjust = 0.5)
+  )
+
+data <- 
+  rfm_segments %>%
+  group_by(segment) %>%
+  select(segment, transaction_count) %>%
+  summarize(median(transaction_count)) %>%
+  rename(segment = segment, med_frequency = `median(transaction_count)`) %>%
+  arrange(med_frequency) 
+
+n_fill <- nrow(data)
+
+ggplot(data, aes(segment, med_frequency)) +
+  geom_bar(stat = "identity", fill = brewer.pal(n = n_fill, name = "Paired")) +
+  xlab("Segment") + ylab("Median Frequency (Number of Times Donated)") +
+  ggtitle("Median Frequency by Segment") +
+  coord_flip() +
+  theme(
+    plot.title = element_text(hjust = 0.5)
+  )
+
+data <- 
+  rfm_segments %>%
+  group_by(segment) %>%
+  select(segment, amount) %>%
+  summarize(median(amount)) %>%
+  rename(segment = segment, med_monetary = `median(amount)`) %>%
+  arrange(med_monetary) 
+
+n_fill <- nrow(data)
+
+ggplot(data, aes(segment, med_monetary)) +
+  geom_bar(stat = "identity", fill = brewer.pal(n = n_fill, name = "Paired")) +
+  xlab("Segment") + ylab("Median Monetary Value") +
+  ggtitle("Median Monetary Value by Segment (Total Amount Donated in USD)") +
+  coord_flip() +
+  theme(
+    plot.title = element_text(hjust = 0.5)
+  )
+```
+
