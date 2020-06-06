@@ -81,7 +81,7 @@ Initially, I was only going to use the last 10 years of data to forecast, in ord
 Second Harvest runs mailing campaigns throughout the year and sends a donation form to every one of their donors in the mail. This didn't account for people who may have just donated or people that only donated once years ago and might not even be at that address anymore. To improve this, I ran an RFM analysis. This puts customers into segments based on recency, frequency, and monetary values. Customers are places into five equally sized bins for each of the three categories. An outline of the segments is shown below.
 
 ```{r, echo=FALSE}
-img <- "F:/rfm_segments.png"
+img <- "F:/rfm_segment1.png"
 include_graphics(img)
 ```
 
@@ -105,11 +105,15 @@ str(rfm)
 
 ```{r, echo=FALSE}
 rfm_heatmap(rfm)
-rfm_bar_chart(rfm)
-
 ```
 
-The heatmap shows us how much money we would expect someone to donate base on their recency and frequency scores. Our chart shows us that the most money is coming in from our most recent donors. This should be seen as a positive. If there were big money donors with very low recency scores, we would be seriously concerned about losing a large amount of donations. The bar charts further show us that the most recent and most frequent donors are donating the most money.
+The heatmap shows us how much money we would expect someone to donate base on their recency and frequency scores. Our chart shows us that the most money is coming in from our most recent donors. This should be seen as a positive. If there were big money donors with very low recency scores, we would be seriously concerned about losing a large amount of donations.
+
+```{r}
+rfm_bar_chart(rfm)
+```
+
+The bar charts further show us that the most recent and most frequent donors are donating the most money.
 
 Now that we have the distriubution of the scores, let's take a look at what the actual values in each segment are. I've created a chart of the amount of donors in each segment and 3 bar plots showing the median recency, frequency, and monetary values of each segment.
 
